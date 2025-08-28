@@ -2,18 +2,31 @@ import streamlit as st
 import pandas as pd
 import openpyxl
 from io import BytesIO
+from datetime import datetime
 
 st.title("班表自動化系統")
 
-# --- 上傳班表 Excel ---
+# --- 日期檢查函數 ---
+def is_date(val):
+    if val is None:
+        return False
+    if isinstance(val, (datetime, pd.Timestamp)):
+        return True
+    try:
+        pd.to_datetime(val)
+        return True
+    except:
+        return False
+
+# --- 上傳班表與員工資料 ---
 schedule_file = st.file_uploader("請上傳排班 Excel", type=["xlsx"])
 employee_file = st.file_uploader("請上傳員工人事資料明細表 Excel", type=["xlsx"])
 
 if schedule_file and employee_file:
-    # 讀取班表
+    # --- 讀取班表 ---
     wb_schedule = openpyxl.load_workbook(schedule_file)
     sheet_names = wb_schedule.sheetnames
-    selected_sheet = st.selectbox("請選擇要使用的班表工作表", sheet_names)
+    selected_sheet = st.selectbox("請選擇班表工作表", sheet_names)
     ws_total = wb_schedule[selected_sheet]
 
     # --- 模組 1：解合併儲存格並填入原值（安全版） ---
@@ -28,15 +41,12 @@ if schedule_file and employee_file:
                 for c in range(min_col, max_col + 1):
                     if c > ws_total.max_column:
                         continue
-                    cell = ws_total.cell(row=r, column=c)
-                    if cell is not None:
-                        cell.value = value_to_fill
+                    ws_total.cell(row=r, column=c).value = value_to_fill
         except Exception as e:
             st.warning(f"跳過合併儲存格範圍 {merged_cell}，原因: {e}")
 
-    # 讀成 DataFrame
+    # 轉成 DataFrame，並處理欄位重複
     df_total = pd.DataFrame(ws_total.values)
-    # 使用第一列為欄位並去重
     cols = list(df_total.iloc[0])
     seen = {}
     for i, c in enumerate(cols):
@@ -60,24 +70,24 @@ if schedule_file and employee_file:
     for r in range(last_row):
         for c in range(1, last_col):
             cell_val = df_total.iloc[r,c]
-            if pd.api.types.is_datetime64_any_dtype(cell_val) or isinstance(cell_val, pd.Timestamp):
-                date_value = cell_val
+            if is_date(cell_val):
+                date_value = pd.to_datetime(cell_val)
                 i = r + 3
                 while i < last_row:
                     shift_type = str(df_total.iloc[i,c]).strip()
-                    if pd.api.types.is_datetime64_any_dtype(df_total.iloc[i,c]) or shift_type == "":
+                    if is_date(df_total.iloc[i,c]) or shift_type == "":
                         break
                     if shift_type in ["早","午","晚"]:
                         i += 1
                         while i < last_row:
-                            if pd.api.types.is_datetime64_any_dtype(df_total.iloc[i,c]):
+                            if is_date(df_total.iloc[i,c]):
                                 break
                             cell_value = str(df_total.iloc[i,c]).strip()
                             if cell_value in ["早","午","晚"]:
                                 break
                             df_out.loc[output_row] = [
                                 clinic_name,
-                                date_value.strftime("%Y/%m/%d") if hasattr(date_value, "strftime") else date_value,
+                                date_value.strftime("%Y/%m/%d"),
                                 shift_type,
                                 cell_value,
                                 df_total.iloc[i,0],
@@ -95,7 +105,8 @@ if schedule_file and employee_file:
     wb_emp = openpyxl.load_workbook(employee_file)
     ws_emp = wb_emp[wb_emp.sheetnames[0]]
     df_emp = pd.DataFrame(ws_emp.values)
-    # 去重處理欄位
+
+    # 處理欄位重複
     cols_emp = list(df_emp.iloc[0])
     seen_emp = {}
     for i, c in enumerate(cols_emp):
@@ -107,12 +118,14 @@ if schedule_file and employee_file:
     df_emp.columns = cols_emp
     df_emp = df_emp[1:].reset_index(drop=True)
 
+    # 建立員工字典
     emp_dict = {}
     for idx, row in df_emp.iterrows():
         name = str(row[1]).strip()
         if name:
-            emp_dict[name] = [str(row[0]), row[2], row[3]]  # empID, dept, title
+            emp_dict[name] = [str(row[0]), row[2], row[3]]  # empID, 部門, 職稱
 
+    # 建立班別分析表
     df_analysis = pd.DataFrame(columns=["診所","員工編號","所屬部門","姓名","職稱","日期","班別","E欄資料","班別代碼"])
     shift_dict = {}
     for idx, row in df_out.iterrows():
@@ -144,7 +157,7 @@ if schedule_file and employee_file:
             ""  # 班別代碼
         ]
 
-    # --- 計算班別代碼 ---
+    # --- 班別代碼函數 ---
     def get_class_code(empTitle, clinicName, shiftType):
         if not empTitle:
             return ""
@@ -167,6 +180,7 @@ if schedule_file and employee_file:
         return classCode.replace("早班早班","早班")
 
     df_analysis['班別代碼'] = df_analysis.apply(lambda x: get_class_code(x['職稱'], x['診所'], x['班別']), axis=1)
+
     st.subheader("班別分析表")
     st.dataframe(df_analysis.head())
 
@@ -175,7 +189,7 @@ if schedule_file and employee_file:
     max_date = pd.to_datetime(df_analysis['日期']).max()
     all_dates = pd.date_range(min_date, max_date).strftime("%Y-%m-%d")
 
-    df_total_shift = pd.DataFrame(columns=["員工編號","員工姓名"]+list(all_dates))
+    df_total_shift = pd.DataFrame(columns=["員工編號","員工姓名"] + list(all_dates))
     dict_shift = {}
     for idx, row in df_analysis.iterrows():
         empID = str(row["員工編號"]).strip()
@@ -209,4 +223,5 @@ if schedule_file and employee_file:
         file_name="班表結果.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
 
