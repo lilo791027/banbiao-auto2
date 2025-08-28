@@ -21,7 +21,22 @@ if shift_file and emp_file:
     st.dataframe(emp_df.head())
 
     # =========================
-    # 模組2：整理班別資料（含空白列，對應 VBA）
+    # 模組1：自動解合併
+    # =========================
+    def unmerge_fill_values(df):
+        """
+        模擬 VBA 解合併並填入原值
+        """
+        df_filled = df.ffill(axis=0)
+        return df_filled
+
+    shift_df_filled = unmerge_fill_values(shift_df)
+
+    st.write("### 模組1：解合併後班表")
+    st.dataframe(shift_df_filled.head())
+
+    # =========================
+    # 模組2：整理班別資料（對應 VBA 邏輯）
     # =========================
     def extract_shift_with_blanks(shift_df):
         output_cols = ["診所", "日期", "班別", "姓名", "A欄資料", "U欄資料"]
@@ -33,10 +48,12 @@ if shift_file and emp_file:
         for r in range(n_rows):
             for c in range(1, n_cols):
                 cell = shift_df.iat[r, c]
-                # 判斷是否為日期
+                # 嘗試轉日期
                 try:
-                    date_value = pd.to_datetime(cell)
+                    date_value = pd.to_datetime(cell, errors='coerce')
                 except:
+                    continue
+                if pd.isna(date_value):
                     continue
 
                 i = r + 3
@@ -61,13 +78,15 @@ if shift_file and emp_file:
                                 pass
                             if next_cell in ["早", "午", "晚"]:
                                 break
+
+                            date_str = date_value.strftime("%Y/%m/%d")
                             output.append([
                                 clinic_name,
-                                date_value.strftime("%Y/%m/%d"),
+                                date_str,
                                 shift_type,
                                 next_cell,
                                 shift_df.iat[i, 0],    # A欄
-                                shift_df.iat[i, 20]    # U欄（第21欄）
+                                shift_df.iat[i, 20]    # U欄
                             ])
                             i += 1
                         i -= 1
@@ -76,9 +95,9 @@ if shift_file and emp_file:
         out_df = pd.DataFrame(output, columns=output_cols)
         return out_df
 
-    shift_clean_df = extract_shift_with_blanks(shift_df)
+    shift_clean_df = extract_shift_with_blanks(shift_df_filled)
 
-    st.write("### 彙整結果（模組2整理後）")
+    st.write("### 模組2：彙整結果")
     st.dataframe(shift_clean_df.head())
 
     # =========================
@@ -165,7 +184,7 @@ if shift_file and emp_file:
         "診所","員工編號","所屬部門","姓名","職稱","日期","班別","E欄資料","班別代碼"
     ])
 
-    st.write("### 班別分析表")
+    st.write("### 模組3：班別分析表")
     st.dataframe(analysis_df.head())
 
     # =========================
@@ -197,7 +216,7 @@ if shift_file and emp_file:
 
     summary_df = pd.DataFrame(summary_rows, columns=["員工編號","員工姓名"] + [day.strftime("%Y-%m-%d") for day in days_in_month])
 
-    st.write("### 班別總表")
+    st.write("### 模組4：班別總表")
     st.dataframe(summary_df.head())
 
     # =========================
@@ -216,5 +235,6 @@ if shift_file and emp_file:
         file_name="班表分析結果.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
 
 
