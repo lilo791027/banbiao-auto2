@@ -13,10 +13,10 @@ if schedule_file and employee_file:
     # 讀取班表
     wb_schedule = openpyxl.load_workbook(schedule_file)
     sheet_names = wb_schedule.sheetnames
-    selected_sheet = st.selectbox("請選擇要使用的工作表", sheet_names)
+    selected_sheet = st.selectbox("請選擇要使用的班表工作表", sheet_names)
     ws_total = wb_schedule[selected_sheet]
     
-    # 解合併儲存格並填入原值
+    # --- 模組 1：解合併儲存格並填入原值 ---
     for merged_cell in list(ws_total.merged_cells.ranges):
         min_row, min_col, max_row, max_col = merged_cell.bounds
         value_to_fill = ws_total.cell(min_row, min_col).value
@@ -25,14 +25,14 @@ if schedule_file and employee_file:
             for c in range(min_col, max_col+1):
                 ws_total.cell(r, c).value = value_to_fill
 
+    # 讀成 DataFrame
     df_total = pd.DataFrame(ws_total.values)
     df_total.columns = df_total.iloc[0]
     df_total = df_total[1:].reset_index(drop=True)
-    
-    st.subheader(f"工作表內容：{selected_sheet}")
+    st.subheader("班表內容")
     st.dataframe(df_total.head())
 
-    # --- 彙整排班資料 ---
+    # --- 模組 2：彙整排班資料 ---
     df_out = pd.DataFrame(columns=["診所","日期","班別","姓名","A欄資料","U欄資料"])
     clinic_name = str(df_total.iloc[0,0])[:4]
     last_row, last_col = df_total.shape
@@ -72,7 +72,7 @@ if schedule_file and employee_file:
     st.subheader("彙整排班資料")
     st.dataframe(df_out.head())
 
-    # --- 讀取員工明細 ---
+    # --- 模組 3：建立班別分析表 ---
     wb_emp = openpyxl.load_workbook(employee_file)
     ws_emp = wb_emp[wb_emp.sheetnames[0]]
     df_emp = pd.DataFrame(ws_emp.values)
@@ -85,7 +85,6 @@ if schedule_file and employee_file:
         if name:
             emp_dict[name] = [str(row[0]), row[2], row[3]]  # empID, dept, title
 
-    # --- 建立班別分析表 ---
     df_analysis = pd.DataFrame(columns=["診所","員工編號","所屬部門","姓名","職稱","日期","班別","E欄資料","班別代碼"])
     shift_dict = {}
     for idx, row in df_out.iterrows():
@@ -142,7 +141,7 @@ if schedule_file and employee_file:
     st.subheader("班別分析表")
     st.dataframe(df_analysis.head())
 
-    # --- 建立班別總表 ---
+    # --- 模組 4：建立班別總表 ---
     min_date = pd.to_datetime(df_analysis['日期']).min()
     max_date = pd.to_datetime(df_analysis['日期']).max()
     all_dates = pd.date_range(min_date, max_date).strftime("%Y-%m-%d")
