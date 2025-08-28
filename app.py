@@ -36,14 +36,24 @@ if schedule_file and employee_file:
 
     # 讀成 DataFrame
     df_total = pd.DataFrame(ws_total.values)
-    df_total.columns = df_total.iloc[0]
+    # 使用第一列為欄位並去重
+    cols = list(df_total.iloc[0])
+    seen = {}
+    for i, c in enumerate(cols):
+        if c in seen:
+            seen[c] += 1
+            cols[i] = f"{c}_{seen[c]}"
+        else:
+            seen[c] = 0
+    df_total.columns = cols
     df_total = df_total[1:].reset_index(drop=True)
+
     st.subheader("班表內容")
     st.dataframe(df_total.head())
 
     # --- 模組 2：彙整排班資料 ---
     df_out = pd.DataFrame(columns=["診所","日期","班別","姓名","A欄資料","U欄資料"])
-    clinic_name = str(df_total.iloc[0,0])[:4]
+    clinic_name = str(df_total.iloc[0,0])[:4] if df_total.shape[1]>0 else ""
     last_row, last_col = df_total.shape
     output_row = 0
 
@@ -85,7 +95,16 @@ if schedule_file and employee_file:
     wb_emp = openpyxl.load_workbook(employee_file)
     ws_emp = wb_emp[wb_emp.sheetnames[0]]
     df_emp = pd.DataFrame(ws_emp.values)
-    df_emp.columns = df_emp.iloc[0]
+    # 去重處理欄位
+    cols_emp = list(df_emp.iloc[0])
+    seen_emp = {}
+    for i, c in enumerate(cols_emp):
+        if c in seen_emp:
+            seen_emp[c] += 1
+            cols_emp[i] = f"{c}_{seen_emp[c]}"
+        else:
+            seen_emp[c] = 0
+    df_emp.columns = cols_emp
     df_emp = df_emp[1:].reset_index(drop=True)
 
     emp_dict = {}
@@ -106,7 +125,8 @@ if schedule_file and employee_file:
 
     for key, shift in shift_dict.items():
         name, date_value, clinic_name = key.split("|")
-        e_value = df_out[df_out["姓名"]==name]["A欄資料"].values[0] if not df_out[df_out["姓名"]==name].empty else ""
+        e_value_row = df_out[df_out["姓名"]==name]
+        e_value = e_value_row["A欄資料"].values[0] if not e_value_row.empty else ""
         shift_type = shift.replace(" ","")
         if name in emp_dict:
             empID, empDept, empTitle = emp_dict[name]
@@ -189,3 +209,4 @@ if schedule_file and employee_file:
         file_name="班表結果.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
