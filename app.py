@@ -5,7 +5,7 @@ from io import BytesIO
 
 st.title("班表自動化系統")
 
-# --- 上傳 Excel ---
+# --- 上傳班表 Excel ---
 schedule_file = st.file_uploader("請上傳排班 Excel", type=["xlsx"])
 employee_file = st.file_uploader("請上傳員工人事資料明細表 Excel", type=["xlsx"])
 
@@ -15,15 +15,24 @@ if schedule_file and employee_file:
     sheet_names = wb_schedule.sheetnames
     selected_sheet = st.selectbox("請選擇要使用的班表工作表", sheet_names)
     ws_total = wb_schedule[selected_sheet]
-    
-    # --- 模組 1：解合併儲存格並填入原值 ---
+
+    # --- 模組 1：解合併儲存格並填入原值（安全版） ---
     for merged_cell in list(ws_total.merged_cells.ranges):
-        min_row, min_col, max_row, max_col = merged_cell.bounds
-        value_to_fill = ws_total.cell(min_row, min_col).value
-        ws_total.unmerge_cells(str(merged_cell))
-        for r in range(min_row, max_row+1):
-            for c in range(min_col, max_col+1):
-                ws_total.cell(r, c).value = value_to_fill
+        try:
+            min_row, min_col, max_row, max_col = merged_cell.bounds
+            value_to_fill = ws_total.cell(row=min_row, column=min_col).value
+            ws_total.unmerge_cells(str(merged_cell))
+            for r in range(min_row, max_row + 1):
+                if r > ws_total.max_row:
+                    continue
+                for c in range(min_col, max_col + 1):
+                    if c > ws_total.max_column:
+                        continue
+                    cell = ws_total.cell(row=r, column=c)
+                    if cell is not None:
+                        cell.value = value_to_fill
+        except Exception as e:
+            st.warning(f"跳過合併儲存格範圍 {merged_cell}，原因: {e}")
 
     # 讀成 DataFrame
     df_total = pd.DataFrame(ws_total.values)
@@ -78,7 +87,7 @@ if schedule_file and employee_file:
     df_emp = pd.DataFrame(ws_emp.values)
     df_emp.columns = df_emp.iloc[0]
     df_emp = df_emp[1:].reset_index(drop=True)
-    
+
     emp_dict = {}
     for idx, row in df_emp.iterrows():
         name = str(row[1]).strip()
