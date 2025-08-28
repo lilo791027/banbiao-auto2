@@ -11,7 +11,7 @@ emp_file = st.file_uploader("上傳員工明細 Excel", type=["xlsx"])
 
 if shift_file and emp_file:
     # 讀取 Excel
-    shift_df = pd.read_excel(shift_file)
+    shift_df = pd.read_excel(shift_file, header=None)
     emp_df = pd.read_excel(emp_file)
 
     st.write("### 班表原始資料")
@@ -21,25 +21,69 @@ if shift_file and emp_file:
     st.dataframe(emp_df.head())
 
     # =========================
-    # 整理班表資料（模組2）
+    # 模組2：整理班別資料（含空白列，對應 VBA）
     # =========================
-    # 假設班表有欄位: '診所','日期','班別','姓名','A欄資料','U欄資料'
-    # 如果欄位不同可調整
-    shift_df = shift_df.rename(columns={
-        shift_df.columns[0]: '診所',
-        shift_df.columns[1]: '日期',
-        shift_df.columns[2]: '班別',
-        shift_df.columns[3]: '姓名',
-        shift_df.columns[4]: 'A欄資料',
-        shift_df.columns[20]: 'U欄資料'
-    })
-    # 去除空值
-    shift_df = shift_df.dropna(subset=['姓名', '班別'])
+    def extract_shift_with_blanks(shift_df):
+        output_cols = ["診所", "日期", "班別", "姓名", "A欄資料", "U欄資料"]
+        output = []
+
+        clinic_name = str(shift_df.iat[0, 0])[:4]
+        n_rows, n_cols = shift_df.shape
+
+        for r in range(n_rows):
+            for c in range(1, n_cols):
+                cell = shift_df.iat[r, c]
+                # 判斷是否為日期
+                try:
+                    date_value = pd.to_datetime(cell)
+                except:
+                    continue
+
+                i = r + 3
+                while i < n_rows:
+                    shift_type = str(shift_df.iat[i, c]).strip()
+                    try:
+                        if pd.notna(pd.to_datetime(shift_df.iat[i, c], errors='coerce')):
+                            break
+                    except:
+                        pass
+                    if shift_type == "":
+                        break
+
+                    if shift_type in ["早", "午", "晚"]:
+                        i += 1
+                        while i < n_rows:
+                            next_cell = str(shift_df.iat[i, c]).strip()
+                            try:
+                                if pd.notna(pd.to_datetime(shift_df.iat[i, c], errors='coerce')):
+                                    break
+                            except:
+                                pass
+                            if next_cell in ["早", "午", "晚"]:
+                                break
+                            output.append([
+                                clinic_name,
+                                date_value.strftime("%Y/%m/%d"),
+                                shift_type,
+                                next_cell,
+                                shift_df.iat[i, 0],    # A欄
+                                shift_df.iat[i, 20]    # U欄（第21欄）
+                            ])
+                            i += 1
+                        i -= 1
+                    i += 1
+
+        out_df = pd.DataFrame(output, columns=output_cols)
+        return out_df
+
+    shift_clean_df = extract_shift_with_blanks(shift_df)
+
+    st.write("### 彙整結果（模組2整理後）")
+    st.dataframe(shift_clean_df.head())
 
     # =========================
-    # 建立班別分析表（模組3）
+    # 模組3：班別分析表
     # =========================
-    # 先建立班別順序函數
     def format_shift_order(shift_str):
         result = ''
         for s in ['早','午','晚']:
@@ -47,7 +91,6 @@ if shift_file and emp_file:
                 result += s
         return result
 
-    # 班別代碼判斷函數
     def get_class_code(empTitle, clinicName, shiftType):
         if not empTitle or pd.isna(empTitle):
             return ''
@@ -88,11 +131,11 @@ if shift_file and emp_file:
     # 建立員工字典
     emp_dict = {str(row[1]).strip(): (str(row[0]), row[2], row[3]) for idx, row in emp_df.iterrows()}
 
-    # 整合班別資料
+    # 合併班別資料
     shift_dict = {}
-    for idx, row in shift_df.iterrows():
+    for idx, row in shift_clean_df.iterrows():
         name = str(row['姓名']).strip()
-        dateValue = pd.to_datetime(row['日期']).strftime("%Y/%m/%d")
+        dateValue = row['日期']
         clinicName = row['診所']
         shiftType = row['班別']
         eValue = row['A欄資料']
@@ -126,14 +169,12 @@ if shift_file and emp_file:
     st.dataframe(analysis_df.head())
 
     # =========================
-    # 建立班別總表（模組4）
+    # 模組4：班別總表
     # =========================
     analysis_df['日期'] = pd.to_datetime(analysis_df['日期'])
     first_date = analysis_df['日期'].min()
     yearInput = first_date.year
     monthInput = first_date.month
-
-    # 所有日期
     days_in_month = pd.date_range(start=f"{yearInput}-{monthInput}-01",
                                   end=f"{yearInput}-{monthInput}-{pd.Period(f'{yearInput}-{monthInput}').days_in_month}")
 
