@@ -57,7 +57,7 @@ def consolidate_selected_sheets(wb, sheet_names):
     return df
 
 # --------------------
-# 模組 3：建立班別分析表（早班特殊規則 + 地區簡化 + 職稱分類對應員工明細）
+# 模組 3：建立班別分析表
 # --------------------
 def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_map: dict) -> pd.DataFrame:
     df_shift = df_shift.copy()
@@ -65,7 +65,7 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
     df_shift.columns = [str(c).strip() for c in df_shift.columns]
     df_emp.columns = [str(c).strip() for c in df_emp.columns]
 
-    # 建立員工字典: name -> [id, dept, title, category, early_special]
+    # 建立員工字典: name -> [員工編號, 部門, 職稱, 分類, 特殊早班]
     emp_dict = {}
     for _, row in df_emp.iterrows():
         name = str(row.get("姓名", "")).strip()
@@ -74,7 +74,7 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
                 str(row.get("員工編號", "")).strip(),
                 str(row.get("部門", "")).strip(),
                 str(row.get("職稱", "")).strip(),
-                str(row.get("分類", "")).strip(),        # 職稱分類
+                str(row.get("分類", "")).strip(),
                 str(row.get("特殊早班", "")).strip()
             ]
 
@@ -113,6 +113,7 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
     return df_analysis
 
 def get_class_code(emp_category, emp_early_special, clinic_name, shift_type, shift_map):
+    # 特殊早班優先
     if str(emp_early_special).strip().lower() in ["是", "true"]:
         return "【員工】純早班"
 
@@ -180,29 +181,37 @@ if shift_file and employee_file:
         if not selected_sheets:
             st.warning("請至少選擇一個工作表！")
         else:
+            # 模組 2
             df_shift = consolidate_selected_sheets(wb_shift, selected_sheets)
             ws_emp = wb_emp[employee_sheet_name]
             data_emp = ws_emp.values
             cols_emp = [str(c).strip() for c in next(data_emp)]
             df_emp = pd.DataFrame(data_emp, columns=cols_emp)
 
-            # 預設班別對照表，可依需求修改
+            # 預設班別對照表
             shift_map = {"早": "早班", "午": "午班", "晚": "晚班"}
 
+            # 模組 3
             df_analysis = create_shift_analysis(df_shift, df_emp, shift_map)
+
+            # 模組 4
             df_summary = create_shift_summary(df_analysis)
 
             st.success("處理完成！")
             st.subheader("班別總表（已過濾無效姓名）")
             st.dataframe(df_summary)
 
-            # 下載 Excel
+            # --------------------
+            # 下載 Excel（彙整結果、班別分析、班別總表）
+            # --------------------
             with BytesIO() as output:
                 with pd.ExcelWriter(output, engine="openpyxl") as writer:
+                    df_shift.to_excel(writer, sheet_name="彙整結果", index=False)
+                    df_analysis.to_excel(writer, sheet_name="班別分析", index=False)
                     df_summary.to_excel(writer, sheet_name="班別總表", index=False)
                 st.download_button(
-                    "下載班別總表 Excel",
+                    "下載 Excel（含彙整結果/班別分析/班別總表）",
                     data=output.getvalue(),
-                    file_name="班別總表.xlsx",
+                    file_name="班表處理結果.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
