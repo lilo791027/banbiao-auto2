@@ -68,11 +68,11 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
     # 建立員工字典: name -> [員工編號, 部門, 職稱, 分類, 特殊早班]
     emp_dict = {}
     for _, row in df_emp.iterrows():
-        name = str(row.get("姓名", "")).strip()
+        name = str(row.get("員工姓名", "")).strip()
         if name:
             emp_dict[name] = [
                 str(row.get("員工編號", "")).strip(),
-                str(row.get("部門", "")).strip(),
+                str(row.get("所屬部門", "")).strip(),
                 str(row.get("職稱", "")).strip(),
                 str(row.get("分類", "")).strip(),
                 str(row.get("特殊早班", "")).strip()
