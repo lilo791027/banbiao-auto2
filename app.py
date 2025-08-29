@@ -65,7 +65,6 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
     df_shift.columns = [str(c).strip() for c in df_shift.columns]
     df_emp.columns = [str(c).strip() for c in df_emp.columns]
 
-    # 建立員工字典: name -> [員工編號, 部門, 職稱, 分類, 特殊早班]
     emp_dict = {}
     for _, row in df_emp.iterrows():
         name = str(row.get("員工姓名", "")).strip()
@@ -78,7 +77,6 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
                 str(row.get("特殊早班", "")).strip()
             ]
 
-    # 合併同人同日同診所班別
     shift_dict = {}
     for _, row in df_shift.iterrows():
         name = str(row.get("姓名", "")).strip()
@@ -92,12 +90,11 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
             shift_dict[key] = set()
         shift_dict[key].add(shift_type)
 
-    # 生成分析表
     data_out = []
     for key, shifts in shift_dict.items():
         name, date_val, clinic = key.split("|")
         if name not in emp_dict:
-            continue  # 班表裡找不到員工明細的姓名直接跳過
+            continue
         shift_type = "".join(s for s in ["早", "午", "晚"] if s in "".join(shifts))
         emp_info = emp_dict.get(name, ["", "", "", "", ""])
         emp_id, emp_dept, emp_title, emp_category, emp_early_special = emp_info
@@ -109,29 +106,20 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
         columns=["診所", "員工編號", "所屬部門", "姓名", "職稱", "日期", "班別", "班別代碼"]
     )
 
-    # 過濾無效姓名
     invalid_names = ["None", "nan", "義診", "單診", "盤點", "電打"]
     df_analysis = df_analysis[~df_analysis["姓名"].astype(str).str.strip().isin(invalid_names)].copy()
     return df_analysis
 
 def get_class_code(emp_category, emp_early_special, clinic_name, shift_type, shift_map):
-    # 特殊早班優先
     if str(emp_early_special).strip().lower() in ["是", "true"]:
         return "【員工】純早班"
-
-    # 早班特殊規則
     if shift_type == "早":
         if emp_category in ["★醫師★", "◇主管◇", "【員工】"]:
             return f"{emp_category}早班"
-
-    # 地區判斷
     region = "立丞" if "立丞" in clinic_name else "板土中京"
-
-    # 班別對照
     base_shift = shift_map.get(shift_type, shift_type)
     if not base_shift.endswith("班"):
         base_shift += "班"
-
     class_code = emp_category + region + base_shift
     return class_code
 
@@ -144,9 +132,7 @@ def create_shift_summary(df_analysis: pd.DataFrame) -> pd.DataFrame:
     df_analysis = df_analysis.copy()
     df_analysis["日期"] = pd.to_datetime(df_analysis["日期"], errors="coerce")
     df_analysis = df_analysis.dropna(subset=["日期"])
-    min_date = df_analysis["日期"].min()
-    max_date = df_analysis["日期"].max()
-    all_dates = pd.date_range(min_date, max_date).strftime("%Y-%m-%d").tolist()
+    all_dates = sorted(df_analysis["日期"].dt.strftime("%Y-%m-%d").unique())
 
     summary_dict = {}
     for _, row in df_analysis.iterrows():
@@ -189,20 +175,15 @@ if shift_file and employee_file:
         if not selected_sheets:
             st.warning("請至少選擇一個工作表！")
         else:
-            # 模組 2
             df_shift = consolidate_selected_sheets(wb_shift, selected_sheets)
             ws_emp = wb_emp[employee_sheet_name]
             data_emp = ws_emp.values
             cols_emp = [str(c).strip() for c in next(data_emp)]
             df_emp = pd.DataFrame(data_emp, columns=cols_emp)
 
-            # 預設班別對照表
             shift_map = {"早": "早", "午": "午", "晚": "晚"}
 
-            # 模組 3
             df_analysis = create_shift_analysis(df_shift, df_emp, shift_map)
-
-            # 模組 4
             df_summary = create_shift_summary(df_analysis)
 
             st.success("處理完成！")
@@ -210,17 +191,14 @@ if shift_file and employee_file:
             st.dataframe(df_summary)
 
             # --------------------
-            # 下載 Excel（彙整結果、班別分析、班別總表）
+            # 下載 Excel（僅班別總表）
             # --------------------
             with BytesIO() as output:
                 with pd.ExcelWriter(output, engine="openpyxl") as writer:
-                    df_shift.to_excel(writer, sheet_name="彙整結果", index=False)
-                    df_analysis.to_excel(writer, sheet_name="班別分析", index=False)
                     df_summary.to_excel(writer, sheet_name="班別總表", index=False)
                 st.download_button(
-                    "下載 Excel（含彙整結果/班別分析/班別總表）",
+                    "下載 Excel（班別總表）",
                     data=output.getvalue(),
-                    file_name="班表處理結果.xlsx",
+                    file_name="班別總表.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
-
