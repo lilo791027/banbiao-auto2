@@ -57,7 +57,7 @@ def consolidate_selected_sheets(wb, sheet_names):
     return df
 
 # --------------------
-# 模組 3：建立班別分析表（早班特殊規則 + 地區簡化）
+# 模組 3：建立班別分析表（早班特殊規則 + 地區簡化 + 職稱分類對應員工明細）
 # --------------------
 def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_map: dict) -> pd.DataFrame:
     df_shift = df_shift.copy()
@@ -65,7 +65,7 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
     df_shift.columns = [str(c).strip() for c in df_shift.columns]
     df_emp.columns = [str(c).strip() for c in df_emp.columns]
 
-    # 建立員工字典: name -> [id, dept, title, class, early_special]
+    # 建立員工字典: name -> [id, dept, title, category, early_special]
     emp_dict = {}
     for _, row in df_emp.iterrows():
         name = str(row.get("姓名", "")).strip()
@@ -74,7 +74,7 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
                 str(row.get("員工編號", "")).strip(),
                 str(row.get("部門", "")).strip(),
                 str(row.get("職稱", "")).strip(),
-                str(row.get("班別分類", "")).strip(),
+                str(row.get("分類", "")).strip(),        # 職稱分類
                 str(row.get("特殊早班", "")).strip()
             ]
 
@@ -98,8 +98,8 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
         name, date_val, clinic = key.split("|")
         shift_type = "".join(s for s in ["早", "午", "晚"] if s in "".join(shifts))
         emp_info = emp_dict.get(name, ["", "", "", "", ""])
-        emp_id, emp_dept, emp_title, emp_class, emp_early_special = emp_info
-        class_code = get_class_code(emp_title, emp_early_special, clinic, shift_type, shift_map)
+        emp_id, emp_dept, emp_title, emp_category, emp_early_special = emp_info
+        class_code = get_class_code(emp_category, emp_early_special, clinic, shift_type, shift_map)
         data_out.append([clinic, emp_id, emp_dept, name, emp_title, date_val, shift_type, class_code])
 
     df_analysis = pd.DataFrame(
@@ -112,19 +112,18 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
     df_analysis = df_analysis[~df_analysis["姓名"].astype(str).str.strip().isin(invalid_names)].copy()
     return df_analysis
 
-def get_class_code(emp_title, emp_early_special, clinic_name, shift_type, shift_map):
+def get_class_code(emp_category, emp_early_special, clinic_name, shift_type, shift_map):
     if str(emp_early_special).strip().lower() in ["是", "true"]:
         return "【員工】純早班"
-    emp_title = str(emp_title).strip()
+
+    # 早班特殊規則
     if shift_type == "早":
-        if emp_title == "★醫師★":
-            return "★醫師★早班"
-        elif emp_title == "◇主管◇":
-            return "◇主管◇早班"
-        elif emp_title == "【員工】":
-            return "【員工】早班"
+        if emp_category in ["★醫師★", "◇主管◇", "【員工】"]:
+            return f"{emp_category}早班"
+
+    # 地區判斷
     region = "立丞" if "立丞" in clinic_name else "板土中京"
-    class_code = emp_title + region + shift_map.get(shift_type, shift_type)
+    class_code = emp_category + region + shift_map.get(shift_type, shift_type)
     return class_code
 
 # --------------------
