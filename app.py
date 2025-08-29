@@ -96,6 +96,8 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
     data_out = []
     for key, shifts in shift_dict.items():
         name, date_val, clinic = key.split("|")
+        if name not in emp_dict:
+            continue  # 班表裡找不到員工明細的姓名直接跳過
         shift_type = "".join(s for s in ["早", "午", "晚"] if s in "".join(shifts))
         emp_info = emp_dict.get(name, ["", "", "", "", ""])
         emp_id, emp_dept, emp_title, emp_category, emp_early_special = emp_info
@@ -198,7 +200,7 @@ if shift_file and employee_file:
             df_summary = create_shift_summary(df_analysis)
 
             st.success("處理完成！")
-            st.subheader("班別總表（已過濾無效姓名）")
+            st.subheader("班別總表（已過濾無效姓名 & 找不到員工明細的姓名已刪除）")
             st.dataframe(df_summary)
 
             # --------------------
