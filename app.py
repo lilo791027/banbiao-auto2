@@ -126,7 +126,13 @@ def get_class_code(emp_category, emp_early_special, clinic_name, shift_type, shi
 
     # 地區判斷
     region = "立丞" if "立丞" in clinic_name else "板土中京"
-    class_code = emp_category + region + shift_map.get(shift_type, shift_type)
+
+    # 班別對照
+    base_shift = shift_map.get(shift_type, shift_type)
+    if not base_shift.endswith("班"):
+        base_shift += "班"
+
+    class_code = emp_category + region + base_shift
     return class_code
 
 # --------------------
@@ -191,7 +197,7 @@ if shift_file and employee_file:
             df_emp = pd.DataFrame(data_emp, columns=cols_emp)
 
             # 預設班別對照表
-            shift_map = {"早": "早班", "午": "午班", "晚": "晚班"}
+            shift_map = {"早": "早", "午": "午", "晚": "晚"}
 
             # 模組 3
             df_analysis = create_shift_analysis(df_shift, df_emp, shift_map)
@@ -217,3 +223,4 @@ if shift_file and employee_file:
                     file_name="班表處理結果.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
+
