@@ -197,10 +197,11 @@ if shift_file and employee_file:
                 with pd.ExcelWriter(output, engine="openpyxl") as writer:
                     df_summary.to_excel(writer, sheet_name="班別總表", index=False)
                 st.download_button(
-                    "下載 Excel（班別總表）",
+                    "下載班別總表Excel",
                     data=output.getvalue(),
                     file_name="班別總表.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
+
 
 
