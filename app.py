@@ -158,7 +158,7 @@ def create_shift_summary(df_analysis: pd.DataFrame) -> pd.DataFrame:
 # --------------------
 # Streamlit 主程式
 # --------------------
-st.title("班表轉換器")
+st.title("班表處理器")
 
 shift_file = st.file_uploader("上傳班表 Excel 檔案", type=["xlsx", "xlsm"])
 employee_file = st.file_uploader("上傳員工資料 Excel 檔案", type=["xlsx", "xlsm"])
@@ -202,4 +202,5 @@ if shift_file and employee_file:
                     file_name="班別總表.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
+
 
