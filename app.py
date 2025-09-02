@@ -186,7 +186,7 @@ if shift_file and employee_file:
             df_analysis = create_shift_analysis(df_shift, df_emp, shift_map)
             df_summary = create_shift_summary(df_analysis)
 
-            st.success("處理完成！")
+            st.success("班別總表已生成完成！")
             st.subheader("班別總表（已過濾無效姓名 & 找不到員工明細的姓名已刪除）")
             st.dataframe(df_summary)
 
@@ -202,6 +202,7 @@ if shift_file and employee_file:
                     file_name="班別總表.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
+
 
 
 
