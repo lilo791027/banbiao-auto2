@@ -57,7 +57,7 @@ def consolidate_selected_sheets(wb, sheet_names):
     return df
 
 # --------------------
-# 模組 3：建立班別分析表
+# 模組 3：建立班別分析表 (已更新「全天班」邏輯)
 # --------------------
 def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_map: dict) -> pd.DataFrame:
     df_shift = df_shift.copy()
@@ -95,11 +95,27 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
         name, date_val, clinic = key.split("|")
         if name not in emp_dict:
             continue
-        shift_type = "".join(s for s in ["早", "午", "晚"] if s in "".join(shifts))
+        
+        # --- 組合班別並應用「全天班」邏輯 ---
+        shift_parts = [s for s in ["早", "午", "晚"] if s in shifts]
+        
+        # 判斷是否為「全天班」：至少包含兩個班別 (早, 午, 晚)
+        if len(shift_parts) >= 2:
+            shift_type_for_code = "全天" # 傳遞給 get_class_code 的班別
+        else:
+            shift_type_for_code = "".join(shift_parts) # 單一班別 (早, 午, 晚)
+        # ------------------------------------
+
         emp_info = emp_dict.get(name, ["", "", "", "", ""])
         emp_id, emp_dept, emp_title, emp_category, emp_early_special = emp_info
-        class_code = get_class_code(emp_category, emp_early_special, clinic, shift_type, shift_map)
-        data_out.append([clinic, emp_id, emp_dept, name, emp_title, date_val, shift_type, class_code])
+        
+        # 使用新的 shift_type_for_code 進行代碼計算
+        class_code = get_class_code(emp_category, emp_early_special, clinic, shift_type_for_code, shift_map)
+        
+        # 原始的 shift_type 仍記錄所有班別，用於除錯或顯示
+        original_shift_type = "".join(shift_parts)
+
+        data_out.append([clinic, emp_id, emp_dept, name, emp_title, date_val, original_shift_type, class_code])
 
     df_analysis = pd.DataFrame(
         data_out,
@@ -110,16 +126,33 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
     df_analysis = df_analysis[~df_analysis["姓名"].astype(str).str.strip().isin(invalid_names)].copy()
     return df_analysis
 
+
 def get_class_code(emp_category, emp_early_special, clinic_name, shift_type, shift_map):
+    
+    # 判斷地區 (適用於所有需要地區名稱的代碼)
+    region = "立丞" if "立丞" in clinic_name else "板土中京"
+
+    # --- 處理「全天班」（強制包含地區） ---
+    if shift_type == "全天":
+        # 確保醫師、主管、員工等所有類別的「全天班」代碼都包含地區
+        return f"{emp_category}{region}全天班" 
+
+    # --- 特殊純早班邏輯 (不變) ---
     if str(emp_early_special).strip().lower() in ["是", "true"]:
         return "【員工】純早班"
+    
+    # --- 單一早班邏輯 (不變，醫師/主管/員工不含地區) ---
     if shift_type == "早":
         if emp_category in ["★醫師★", "◇主管◇", "【員工】"]:
             return f"{emp_category}早班"
-    region = "立丞" if "立丞" in clinic_name else "板土中京"
+        
+    # --- 單一 午/晚 班邏輯 (不變，含地區) ---
     base_shift = shift_map.get(shift_type, shift_type)
+    
     if not base_shift.endswith("班"):
         base_shift += "班"
+    
+    # 例如: 【員工】板土中京午班
     class_code = emp_category + region + base_shift
     return class_code
 
@@ -202,7 +235,6 @@ if shift_file and employee_file:
                     file_name="班別總表.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
-
 
 
 
