@@ -5,7 +5,7 @@ from io import BytesIO
 from datetime import datetime
 
 # --------------------
-# 模組 1：解除合併儲存格並填入原值
+# 模組 1：解除合併儲存格並填入原值 (不變)
 # --------------------
 def unmerge_and_fill(ws):
     for merged in list(ws.merged_cells.ranges):
@@ -16,7 +16,7 @@ def unmerge_and_fill(ws):
                 cell.value = value
 
 # --------------------
-# 模組 2：整理班表資料（去掉 A/U 欄）
+# 模組 2：整理班表資料（去掉 A/U 欄） (不變)
 # --------------------
 def consolidate_selected_sheets(wb, sheet_names):
     all_data = []
@@ -57,7 +57,7 @@ def consolidate_selected_sheets(wb, sheet_names):
     return df
 
 # --------------------
-# 模組 3：建立班別分析表 (已更新「全天班」邏輯)
+# 模組 3：建立班別分析表 (已更新「全天班」判斷邏輯)
 # --------------------
 def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_map: dict) -> pd.DataFrame:
     df_shift = df_shift.copy()
@@ -99,11 +99,12 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
         # --- 組合班別並應用「全天班」邏輯 ---
         shift_parts = [s for s in ["早", "午", "晚"] if s in shifts]
         
-        # 判斷是否為「全天班」：至少包含兩個班別 (早, 午, 晚)
-        if len(shift_parts) >= 2:
+        # 新邏輯：只有當 set(["早", "午", "晚"]) 都在 shift_parts 中時，才視為全天班
+        if set(["早", "午", "晚"]).issubset(set(shift_parts)):
             shift_type_for_code = "全天" # 傳遞給 get_class_code 的班別
         else:
-            shift_type_for_code = "".join(shift_parts) # 單一班別 (早, 午, 晚)
+            # 否則，保持原始的單一班別或兩班組合 (例如："早", "午晚")
+            shift_type_for_code = "".join(shift_parts) 
         # ------------------------------------
 
         emp_info = emp_dict.get(name, ["", "", "", "", ""])
@@ -112,7 +113,7 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
         # 使用新的 shift_type_for_code 進行代碼計算
         class_code = get_class_code(emp_category, emp_early_special, clinic, shift_type_for_code, shift_map)
         
-        # 原始的 shift_type 仍記錄所有班別，用於除錯或顯示
+        # 原始的 shift_type 仍記錄所有班別
         original_shift_type = "".join(shift_parts)
 
         data_out.append([clinic, emp_id, emp_dept, name, emp_title, date_val, original_shift_type, class_code])
@@ -132,7 +133,7 @@ def get_class_code(emp_category, emp_early_special, clinic_name, shift_type, shi
     # 判斷地區 (適用於所有需要地區名稱的代碼)
     region = "立丞" if "立丞" in clinic_name else "板土中京"
 
-    # --- 處理「全天班」（強制包含地區） ---
+    # --- 處理「全天班」（只有 shift_type 為 "全天" 才會進入此處，且強制包含地區） ---
     if shift_type == "全天":
         # 確保醫師、主管、員工等所有類別的「全天班」代碼都包含地區
         return f"{emp_category}{region}全天班" 
@@ -146,18 +147,20 @@ def get_class_code(emp_category, emp_early_special, clinic_name, shift_type, shi
         if emp_category in ["★醫師★", "◇主管◇", "【員工】"]:
             return f"{emp_category}早班"
         
-    # --- 單一 午/晚 班邏輯 (不變，含地區) ---
+    # --- 單一 午/晚 班 或 兩班組合 (早午, 午晚, 早晚) 邏輯 ---
+    # 此時 shift_type 可能是 "午", "晚", "早午", "午晚", "早晚"
+    
     base_shift = shift_map.get(shift_type, shift_type)
     
     if not base_shift.endswith("班"):
         base_shift += "班"
     
-    # 例如: 【員工】板土中京午班
+    # 例如: 【員工】板土中京午班, 或 【員工】板土中京早午班
     class_code = emp_category + region + base_shift
     return class_code
 
 # --------------------
-# 模組 4：建立班別總表
+# 模組 4：建立班別總表 (不變)
 # --------------------
 def create_shift_summary(df_analysis: pd.DataFrame) -> pd.DataFrame:
     if df_analysis.empty:
@@ -189,7 +192,7 @@ def create_shift_summary(df_analysis: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(data_out, columns=columns)
 
 # --------------------
-# Streamlit 主程式
+# Streamlit 主程式 (不變)
 # --------------------
 st.title("班表處理器")
 
@@ -235,6 +238,5 @@ if shift_file and employee_file:
                     file_name="班別總表.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
-
 
 
