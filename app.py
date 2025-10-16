@@ -3,6 +3,7 @@ import pandas as pd
 from openpyxl import load_workbook
 from io import BytesIO
 from datetime import datetime
+import re # 引入正則表達式庫，讓地區判斷更穩健
 
 # --------------------
 # 模組 1：解除合併儲存格並填入原值 (不變)
@@ -23,7 +24,7 @@ def consolidate_selected_sheets(wb, sheet_names):
     for sheet_name in sheet_names:
         ws = wb[sheet_name]
         unmerge_and_fill(ws)
-        clinic_name = str(ws.cell(row=1, column=1).value)[:4]
+        clinic_name = str(ws.cell(row=1, column=1).value).strip()[:4] # 確保 clinic_name 取得穩健
         max_row = ws.max_row
         max_col = ws.max_column
         for r in range(1, max_row + 1):
@@ -57,7 +58,7 @@ def consolidate_selected_sheets(wb, sheet_names):
     return df
 
 # --------------------
-# 模組 3：建立班別分析表 (已更新「全天班」判斷邏輯)
+# 模組 3：建立班別分析表 (已更新：直接使用組合班別字串)
 # --------------------
 def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_map: dict) -> pd.DataFrame:
     df_shift = df_shift.copy()
@@ -65,6 +66,7 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
     df_shift.columns = [str(c).strip() for c in df_shift.columns]
     df_emp.columns = [str(c).strip() for c in df_emp.columns]
 
+    # 建立員工資訊字典
     emp_dict = {}
     for _, row in df_emp.iterrows():
         name = str(row.get("員工姓名", "")).strip()
@@ -74,9 +76,10 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
                 str(row.get("所屬部門", "")).strip(),
                 str(row.get("職稱", "")).strip(),
                 str(row.get("分類", "")).strip(),
-                str(row.get("特殊早班", "")).strip()
+                str(row.get("特殊早班", "")).strip() # 第 4 項：特殊早班旗標
             ]
 
+    # 組合每日班別
     shift_dict = {}
     for _, row in df_shift.iterrows():
         name = str(row.get("姓名", "")).strip()
@@ -96,15 +99,10 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
         if name not in emp_dict:
             continue
         
-        # --- 組合班別並應用「全天班」邏輯 ---
+        # --- 組合班別：直接使用班別組合字串 (例如："早", "午晚", "早午晚") ---
         shift_parts = [s for s in ["早", "午", "晚"] if s in shifts]
-        
-        # 新邏輯：只有當 set(["早", "午", "晚"]) 都在 shift_parts 中時，才視為全天班
-        if set(["早", "午", "晚"]).issubset(set(shift_parts)):
-            shift_type_for_code = "全天" # 傳遞給 get_class_code 的班別
-        else:
-            # 否則，保持原始的單一班別或兩班組合 (例如："早", "午晚")
-            shift_type_for_code = "".join(shift_parts) 
+        # 使用排序後的字串作為班別代碼 (例如：不會出現 "午早"，只會出現 "早午")
+        shift_type_for_code = "".join(sorted(shift_parts, key=lambda x: {"早": 1, "午": 2, "晚": 3}.get(x, 9)))
         # ------------------------------------
 
         emp_info = emp_dict.get(name, ["", "", "", "", ""])
@@ -114,7 +112,7 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
         class_code = get_class_code(emp_category, emp_early_special, clinic, shift_type_for_code, shift_map)
         
         # 原始的 shift_type 仍記錄所有班別
-        original_shift_type = "".join(shift_parts)
+        original_shift_type = shift_type_for_code
 
         data_out.append([clinic, emp_id, emp_dept, name, emp_title, date_val, original_shift_type, class_code])
 
@@ -129,33 +127,65 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
 
 
 def get_class_code(emp_category, emp_early_special, clinic_name, shift_type, shift_map):
+    """
+    根據員工類別、特殊旗標、診所和班別類型計算排班代碼 (Class Code)。
+    """
     
-    # 判斷地區 (適用於所有需要地區名稱的代碼)
-    region = "立丞" if "立丞" in clinic_name else "板土中京"
+    # 判斷地區 (忽略大小寫和空白)
+    region = "立丞" if re.search(r"立丞", str(clinic_name), re.IGNORECASE) else "板土中京"
 
-    # --- 處理「全天班」（只有 shift_type 為 "全天" 才會進入此處，且強制包含地區） ---
-    if shift_type == "全天":
-        # 確保醫師、主管、員工等所有類別的「全天班」代碼都包含地區
-        return f"{emp_category}{region}全天班" 
+    # 檢查特殊早班旗標
+    is_early_special = str(emp_early_special).strip().lower() in ["是", "true"]
 
-    # --- 特殊純早班邏輯 (不變) ---
-    if str(emp_early_special).strip().lower() in ["是", "true"]:
-        return "【員工】純早班"
-    
-    # --- 單一早班邏輯 (不變，醫師/主管/員工不含地區) ---
-    if shift_type == "早":
-        if emp_category in ["★醫師★", "◇主管◇", "【員工】"]:
-            return f"{emp_category}早班"
+    # --- 1. 修改後的「純早班特權」邏輯 (最高優先，適用含早班組合) ---
+    if is_early_special and "早" in shift_type:
         
-    # --- 單一 午/晚 班 或 兩班組合 (早午, 午晚, 早晚) 邏輯 ---
-    # 此時 shift_type 可能是 "午", "晚", "早午", "午晚", "早晚"
+        if shift_type == "早":
+            # 1. 班別是早: 【員工】純早班 (不依地區)
+            return "【員工】純早班"
+        
+        elif shift_type == "早午":
+            # 2. 班別是早午: 【員工】[地區]純早、午班
+            return f"【員工】{region}純早、午班"
+        
+        elif shift_type == "早晚":
+            # 3. 班別是早晚: 【員工】[地區]純早、晚班
+            return f"【員工】{region}純早、晚班"
+        
+        elif shift_type == "早午晚":
+            # 4. 班別是早午晚: 【員工】[地區]純早午晚班 (取代了原來的 "全天")
+            return f"【員工】{region}純早午晚班"
+        
+        # 如果有特權但 shift_type 不在預設的組合內，則繼續執行後續邏輯
+    # -------------------------------------------------------------
     
-    base_shift = shift_map.get(shift_type, shift_type)
+    # --- 2. 單一早班的一般職位特殊處理 (僅限 shift_type = "早") ---
+    if shift_type == "早":
+        # 這裡會處理沒有純早班特權的醫師/主管/員工
+        if emp_category == "★醫師★":
+            return "★醫師★早班"
+        elif emp_category == "◇主管◇":
+            return "◇主管◇早班"
+        elif emp_category == "【員工】":
+            return "【員工】早班"
+        # 其他職位 (如護理) 則進入預設分類
+    # -------------------------------------------------------------
     
-    if not base_shift.endswith("班"):
-        base_shift += "班"
+    # --- 3. 預設分類（適用於所有未被前面規則截斷的班別） ---
+    # 此時 shift_type 可能是 "午", "晚", "午晚", 或其他未被攔截的組合 (如：沒有特權的 "早午")
     
-    # 例如: 【員工】板土中京午班, 或 【員工】板土中京早午班
+    # 從 shift_map 獲取班別名稱（通常 shift_map 只有單班別，但此處維持靈活性）
+    base_shift = shift_map.get(shift_type)
+    
+    # 如果 shift_type 是多班組合 (如 "午晚" 或 "早午")，通常不會在 shift_map 裡，直接用 shift_type
+    if base_shift is None:
+        base_shift = shift_type
+    
+    # 確保代碼末尾有 "班" 字
+    if not str(base_shift).strip().endswith("班"):
+        base_shift += "班" 
+    
+    # 組合代碼: [員工類別][地區][班別代碼]
     class_code = emp_category + region + base_shift
     return class_code
 
@@ -217,7 +247,8 @@ if shift_file and employee_file:
             cols_emp = [str(c).strip() for c in next(data_emp)]
             df_emp = pd.DataFrame(data_emp, columns=cols_emp)
 
-            shift_map = {"早": "早", "午": "午", "晚": "晚"}
+            # shift_map 僅包含單班別的映射，複雜組合會在 get_class_code 中處理
+            shift_map = {"早": "早", "午": "午", "晚": "晚"} 
 
             df_analysis = create_shift_analysis(df_shift, df_emp, shift_map)
             df_summary = create_shift_summary(df_analysis)
@@ -238,5 +269,3 @@ if shift_file and employee_file:
                     file_name="班別總表.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                 )
-
-
