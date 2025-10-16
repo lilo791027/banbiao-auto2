@@ -3,7 +3,7 @@ import pandas as pd
 from openpyxl import load_workbook
 from io import BytesIO
 from datetime import datetime
-import re # 引入正則表達式庫，讓地區判斷更穩健
+import re # 引入正則表達式庫
 
 # --------------------
 # 模組 1：解除合併儲存格並填入原值 (不變)
@@ -24,7 +24,7 @@ def consolidate_selected_sheets(wb, sheet_names):
     for sheet_name in sheet_names:
         ws = wb[sheet_name]
         unmerge_and_fill(ws)
-        clinic_name = str(ws.cell(row=1, column=1).value).strip()[:4] # 確保 clinic_name 取得穩健
+        clinic_name = str(ws.cell(row=1, column=1).value).strip()[:4] 
         max_row = ws.max_row
         max_col = ws.max_column
         for r in range(1, max_row + 1):
@@ -153,10 +153,9 @@ def get_class_code(emp_category, emp_early_special, clinic_name, shift_type, shi
             return f"【員工】{region}純早、晚班"
         
         elif shift_type == "早午晚":
-            # 4. 班別是早午晚: 【員工】[地區]純早午晚班 (取代了原來的 "全天")
+            # 4. 班別是早午晚: 【員工】[地區]純早午晚班
             return f"【員工】{region}純早午晚班"
         
-        # 如果有特權但 shift_type 不在預設的組合內，則繼續執行後續邏輯
     # -------------------------------------------------------------
     
     # --- 2. 單一早班的一般職位特殊處理 (僅限 shift_type = "早") ---
@@ -170,14 +169,20 @@ def get_class_code(emp_category, emp_early_special, clinic_name, shift_type, shi
             return "【員工】早班"
         # 其他職位 (如護理) 則進入預設分類
     # -------------------------------------------------------------
+
+    # --- 3. 新增邏輯：非特殊班別的「早午晚」全部轉為「地區全天班」 ---
+    # 此處邏輯會覆蓋沒有特權的醫師/主管/員工/護理等的「早午晚」班別
+    if shift_type == "早午晚":
+        # 例如: 護理 + 立丞 + 全天班 -> 護理立丞全天班
+        return f"{emp_category}{region}全天班"
+    # -------------------------------------------------------------
     
-    # --- 3. 預設分類（適用於所有未被前面規則截斷的班別） ---
-    # 此時 shift_type 可能是 "午", "晚", "午晚", 或其他未被攔截的組合 (如：沒有特權的 "早午")
+    # --- 4. 預設分類（適用於所有未被前面規則截斷的班別，如 "午", "晚", "午晚", "早午" (無特權) 等） ---
     
-    # 從 shift_map 獲取班別名稱（通常 shift_map 只有單班別，但此處維持靈活性）
+    # 從 shift_map 獲取班別名稱
     base_shift = shift_map.get(shift_type)
     
-    # 如果 shift_type 是多班組合 (如 "午晚" 或 "早午")，通常不會在 shift_map 裡，直接用 shift_type
+    # 如果 shift_type 是多班組合，直接用 shift_type
     if base_shift is None:
         base_shift = shift_type
     
