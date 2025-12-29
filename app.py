@@ -98,6 +98,7 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
         if not name_col: continue
 
         raw_name = str(row.get(name_col, "")).strip()
+        # 清洗名字空白
         clean_name_key = raw_name.replace(" ", "").replace("　", "")
         
         if clean_name_key and clean_name_key not in ["nan", "None"]:
@@ -167,7 +168,7 @@ def get_class_code(emp_category, emp_early_special, clinic_name, shift_type, shi
     return str(emp_category) + str(region) + str(base)
 
 # --------------------
-# 模組 4：建立班別總表 (嚴格過濾版)
+# 模組 4：建立班別總表 (嚴格刪除無員編)
 # --------------------
 def create_shift_summary(df_analysis: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     if df_analysis.empty:
@@ -194,24 +195,27 @@ def create_shift_summary(df_analysis: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
     data_out = []
     debug_list = []
 
-    # 垃圾關鍵字清單 (如果名字包含這些，直接剔除)
     invalid_keywords = ["義診", "單診", "盤點", "電打", "公務", "測試"]
 
     for (emp_id, emp_name), shifts in summary_dict.items():
         title = info_map.get((emp_id, emp_name), "")
         
-        # --- 1. 嚴格過濾：無員編或無效名字直接跳過 ---
-        has_id = emp_id and emp_id.lower() not in ["nan", "none", ""]
+        # === 關鍵邏輯 ===
+        # 1. 檢查員編：如果是空、nan、None，該員直接刪除
+        has_valid_id = emp_id and emp_id.lower() not in ["nan", "none", ""]
+        
+        # 2. 檢查無效姓名
         is_invalid_name = any(k in emp_name for k in invalid_keywords)
         
-        if not has_id or is_invalid_name:
-            # 這些人直接不加入 data_out，也不顯示在結果中
-            continue 
-        
-        # --- 2. 判斷填補邏輯 ---
+        # 如果無員編 或 名字無效，直接跳過 (Drop row)
+        if not has_valid_id or is_invalid_name:
+            continue
+        # ===============
+
+        # 3. 判斷是否需要填補 (僅排除 醫師/兼職)
         is_doctor_or_pt = ("醫師" in title) or ("兼職" in title)
         
-        # 有員編 且 不是(醫師或兼職) 才填補
+        # 如果不是醫師也不是兼職，就要填補
         should_fill = not is_doctor_or_pt
         
         # 準備循環填補器
@@ -226,7 +230,7 @@ def create_shift_summary(df_analysis: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
                 if should_fill:
                     val = next(leave_cycle) 
                 else:
-                    val = "" 
+                    val = "" # 醫師/兼職 保持空白
             
             row.append(val)
         data_out.append(row)
@@ -237,8 +241,9 @@ def create_shift_summary(df_analysis: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
 # --------------------
 # Streamlit 主程式
 # --------------------
-st.set_page_config(page_title="班表處理器(乾淨版)", layout="wide")
-st.title("班表處理器 (已過濾無員編/無效名單)")
+st.set_page_config(page_title="班表處理器(終極版)", layout="wide")
+st.title("班表處理器")
+st.success("規則：無員編者直接刪除；非醫師/兼職的員工，自動填補空班。")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -285,12 +290,10 @@ if shift_file and employee_file:
                 df_analysis = create_shift_analysis(df_shift, df_emp_raw, shift_map)
                 df_summary, _ = create_shift_summary(df_analysis)
             
-            st.success("處理完成！無員編或無效名字已自動剔除。")
-            
-            st.subheader("📊 班別總表 (乾淨版)")
+            st.subheader("📊 班別總表 (已過濾無員編)")
             st.dataframe(df_summary, use_container_width=True)
 
             with BytesIO() as output:
                 with pd.ExcelWriter(output, engine="openpyxl") as writer:
                     df_summary.to_excel(writer, sheet_name="班別總表", index=False)
-                st.download_button("📥 下載 Excel 結果", output.getvalue(), "班別總表_乾淨版.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+                st.download_button("📥 下載 Excel 結果", output.getvalue(), "班別總表_最終版.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
