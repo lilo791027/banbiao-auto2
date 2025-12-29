@@ -59,7 +59,7 @@ def consolidate_selected_sheets(wb, sheet_names):
     return df
 
 # --------------------
-# 模組 3：建立班別分析表
+# 模組 3：建立班別分析表 (含職稱讀取)
 # --------------------
 def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_map: dict) -> pd.DataFrame:
     df_shift = df_shift.copy()
@@ -75,7 +75,7 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
             emp_dict[name] = [
                 str(row.get("員工編號", "")).strip(),
                 str(row.get("所屬部門", "")).strip(),
-                str(row.get("職稱", "")).strip(), # 關鍵：讀取職稱
+                str(row.get("職稱", "")).strip(), # 關鍵：讀取職稱，用於總表填補判斷
                 str(row.get("分類", "")).strip(),
                 str(row.get("特殊早班", "")).strip()
             ]
@@ -99,6 +99,7 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
         if name not in emp_dict:
             continue
         
+        # 組合班別：排序後字串 (例如 "早午")
         shift_parts = [s for s in ["早", "午", "晚"] if s in shifts]
         shift_type_for_code = "".join(sorted(shift_parts, key=lambda x: {"早": 1, "午": 2, "晚": 3}.get(x, 9)))
 
@@ -120,10 +121,17 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
     return df_analysis
 
 def get_class_code(emp_category, emp_early_special, clinic_name, shift_type, shift_map):
+    """
+    班別代碼轉換邏輯：
+    1. 特殊早班 (最高優先)
+    2. 一般單一早班
+    3. 早午晚 -> 全天班
+    4. 其他預設
+    """
     region = "立丞" if re.search(r"立丞", str(clinic_name), re.IGNORECASE) else "板土中京"
     is_early_special = str(emp_early_special).strip().lower() in ["是", "true"]
 
-    # 1. 特殊早班優先
+    # 1. 特殊早班特權
     if is_early_special and "早" in shift_type:
         if shift_type == "早":
             return "【員工】純早班"
@@ -143,11 +151,11 @@ def get_class_code(emp_category, emp_early_special, clinic_name, shift_type, shi
         elif emp_category == "【員工】":
             return "【員工】早班"
 
-    # 3. 全天班轉換
+    # 3. 早午晚 -> 全天班
     if shift_type == "早午晚":
         return f"{emp_category}{region}全天班"
     
-    # 4. 其他
+    # 4. 預設邏輯
     base_shift = shift_map.get(shift_type)
     if base_shift is None:
         base_shift = shift_type
@@ -159,16 +167,17 @@ def get_class_code(emp_category, emp_early_special, clinic_name, shift_type, shi
     return class_code
 
 # --------------------
-# 模組 4：建立班別總表 (含自動填補與診斷)
+# 模組 4：建立班別總表 (在此階段執行自動填補)
 # --------------------
-def create_shift_summary(df_analysis: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+def create_shift_summary(df_analysis: pd.DataFrame) -> pd.DataFrame:
     if df_analysis.empty:
-        return pd.DataFrame(), pd.DataFrame()
+        return pd.DataFrame()
     df_analysis = df_analysis.copy()
     df_analysis["日期"] = pd.to_datetime(df_analysis["日期"], errors="coerce")
     df_analysis = df_analysis.dropna(subset=["日期"])
     all_dates = sorted(df_analysis["日期"].dt.strftime("%Y-%m-%d").unique())
 
+    # 建立職稱對照表 (確保每個員工都有職稱)
     emp_title_map = df_analysis[["員工編號", "姓名", "職稱"]].drop_duplicates().set_index(["員工編號", "姓名"])["職稱"].to_dict()
 
     summary_dict = {}
@@ -185,34 +194,30 @@ def create_shift_summary(df_analysis: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
         summary_dict[key][shift_date] = class_code
 
     data_out = []
-    debug_list = [] # 診斷用
-
+    
     for (emp_id, emp_name), shifts in summary_dict.items():
         title = str(emp_title_map.get((emp_id, emp_name), "")).strip()
         
-        # 排除邏輯
+        # 排除邏輯：職稱包含 "醫師" 或 "兼職" 者，不自動填補
         is_excluded = ("醫師" in title) or ("兼職" in title)
         
-        # 紀錄診斷報告
-        debug_list.append({
-            "員工姓名": emp_name,
-            "系統讀到的職稱": title if title else "(空白-請檢查Excel)",
-            "是否自動填補": "❌ 否 (醫師/兼職)" if is_excluded else "✅ 是 (自動填入)",
-        })
-
+        # 準備填補用的循環器：{sta} -> {res} -> {sta} ...
         leave_cycle = cycle(["{sta}", "{res}"])
         
         row = [emp_id, emp_name]
         for d in all_dates:
+            # 取得當天的「轉換後班別代碼」
             val = shifts.get(d, "")
-            # 填補邏輯
+            
+            # 如果代碼是空的 (代表當天無班)，且該員工沒有被排除
             if val == "" and not is_excluded:
-                val = next(leave_cycle)
+                val = next(leave_cycle) # 填入假別
+                
             row.append(val)
         data_out.append(row)
 
     columns = ["員工編號", "員工姓名"] + all_dates
-    return pd.DataFrame(data_out, columns=columns), pd.DataFrame(debug_list)
+    return pd.DataFrame(data_out, columns=columns)
 
 # --------------------
 # Streamlit 主程式
@@ -222,10 +227,11 @@ st.set_page_config(page_title="班表處理器", layout="wide")
 st.title("班表處理器")
 st.markdown("""
 **功能說明**：
-1. **排班代碼轉換**：支援特殊早班與全天班邏輯。
-2. **自動填補空班**：非醫師與兼職人員的空班，自動依序填入 `{sta}` 與 `{res}`。
+1. **班別轉換**：支援特殊早班與全天班邏輯。
+2. **自動填補**：產出總表時，針對非醫師/兼職人員的空班，自動依序填入 `{sta}` 與 `{res}`。
 """)
 
+# 上傳介面
 shift_file = st.file_uploader("📂 步驟 1：上傳班表 Excel", type=["xlsx", "xlsm"])
 employee_file = st.file_uploader("📂 步驟 2：上傳員工資料 Excel", type=["xlsx", "xlsm"])
 
@@ -248,26 +254,23 @@ if shift_file and employee_file:
                 
                 ws_emp = wb_emp[employee_sheet_name]
                 data_emp = ws_emp.values
-                cols_emp = [str(c).strip() for c in next(data_emp)]
+                cols_emp = [str(c).strip() for c in next(data_emp)] # 清洗標題
                 df_emp = pd.DataFrame(data_emp, columns=cols_emp)
 
                 shift_map = {"早": "早", "午": "午", "晚": "晚"} 
 
+                # 1. 分析並轉換班別代碼
                 df_analysis = create_shift_analysis(df_shift, df_emp, shift_map)
                 
-                # 取得分析結果與診斷報告
-                df_summary, df_debug = create_shift_summary(df_analysis)
+                # 2. 製作總表並執行自動填補
+                df_summary = create_shift_summary(df_analysis)
 
-            st.success("處理完成！請查看下方結果")
+            st.success("處理完成！")
             
-            # --- 顯示診斷報告 ---
-            with st.expander("🕵️‍♀️ 診斷報告：為何我的空班沒有填？(點擊查看)", expanded=False):
-                st.info("若「是否自動填補」為「否」，請檢查該員工職稱是否包含「醫師」或「兼職」。")
-                st.dataframe(df_debug, use_container_width=True)
-
-            st.subheader("📊 班表總表預覽")
+            st.subheader("📊 班別總表預覽 (含自動填補結果)")
             st.dataframe(df_summary, use_container_width=True)
 
+            # 下載按鈕
             with BytesIO() as output:
                 with pd.ExcelWriter(output, engine="openpyxl") as writer:
                     df_summary.to_excel(writer, sheet_name="班別總表", index=False)
