@@ -4,10 +4,9 @@ from openpyxl import load_workbook
 from io import BytesIO
 from datetime import datetime
 import re # 引入正則表達式庫
-from itertools import cycle # 新增：引入循環工具 (用於 sta/res 輪替)
 
 # --------------------
-# 模組 1：解除合併儲存格並填入原值 (完全不變)
+# 模組 1：解除合併儲存格並填入原值 (不變)
 # --------------------
 def unmerge_and_fill(ws):
     for merged in list(ws.merged_cells.ranges):
@@ -18,7 +17,7 @@ def unmerge_and_fill(ws):
                 cell.value = value
 
 # --------------------
-# 模組 2：整理班表資料（去掉 A/U 欄） (完全不變)
+# 模組 2：整理班表資料（去掉 A/U 欄） (不變)
 # --------------------
 def consolidate_selected_sheets(wb, sheet_names):
     all_data = []
@@ -59,7 +58,7 @@ def consolidate_selected_sheets(wb, sheet_names):
     return df
 
 # --------------------
-# 模組 3：建立班別分析表 (完全不變)
+# 模組 3：建立班別分析表 (已更新：直接使用組合班別字串)
 # --------------------
 def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_map: dict) -> pd.DataFrame:
     df_shift = df_shift.copy()
@@ -130,7 +129,6 @@ def create_shift_analysis(df_shift: pd.DataFrame, df_emp: pd.DataFrame, shift_ma
 def get_class_code(emp_category, emp_early_special, clinic_name, shift_type, shift_map):
     """
     根據員工類別、特殊旗標、診所和班別類型計算排班代碼 (Class Code)。
-    (此邏輯完全不變)
     """
     
     # 判斷地區 (忽略大小寫和空白)
@@ -141,15 +139,25 @@ def get_class_code(emp_category, emp_early_special, clinic_name, shift_type, shi
 
     # --- 1. 修改後的「純早班特權」邏輯 (最高優先，適用含早班組合) ---
     if is_early_special and "早" in shift_type:
+        
         if shift_type == "早":
+            # 1. 班別是早: 【員工】純早班 (不依地區)
             return "【員工】純早班"
+        
         elif shift_type == "早午":
+            # 2. 班別是早午: 【員工】[地區]純早、午班
             return f"【員工】{region}純早、午班"
+        
         elif shift_type == "早晚":
+            # 3. 班別是早晚: 【員工】[地區]純早、晚班
             return f"【員工】{region}純早、晚班"
+        
         elif shift_type == "早午晚":
+            # 4. 班別是早午晚: 【員工】[地區]純早午晚班
             return f"【員工】{region}純早午晚班"
         
+    # -------------------------------------------------------------
+    
     # --- 2. 單一早班的一般職位特殊處理 (僅限 shift_type = "早") ---
     if shift_type == "早":
         # 這裡會處理沒有純早班特權的醫師/主管/員工
@@ -159,13 +167,22 @@ def get_class_code(emp_category, emp_early_special, clinic_name, shift_type, shi
             return "◇主管◇早班"
         elif emp_category == "【員工】":
             return "【員工】早班"
+        # 其他職位 (如護理) 則進入預設分類
+    # -------------------------------------------------------------
 
     # --- 3. 新增邏輯：非特殊班別的「早午晚」全部轉為「地區全天班」 ---
+    # 此處邏輯會覆蓋沒有特權的醫師/主管/員工/護理等的「早午晚」班別
     if shift_type == "早午晚":
+        # 例如: 護理 + 立丞 + 全天班 -> 護理立丞全天班
         return f"{emp_category}{region}全天班"
+    # -------------------------------------------------------------
     
-    # --- 4. 預設分類 ---
+    # --- 4. 預設分類（適用於所有未被前面規則截斷的班別，如 "午", "晚", "午晚", "早午" (無特權) 等） ---
+    
+    # 從 shift_map 獲取班別名稱
     base_shift = shift_map.get(shift_type)
+    
+    # 如果 shift_type 是多班組合，直接用 shift_type
     if base_shift is None:
         base_shift = shift_type
     
@@ -173,11 +190,12 @@ def get_class_code(emp_category, emp_early_special, clinic_name, shift_type, shi
     if not str(base_shift).strip().endswith("班"):
         base_shift += "班" 
     
+    # 組合代碼: [員工類別][地區][班別代碼]
     class_code = emp_category + region + base_shift
     return class_code
 
 # --------------------
-# 模組 4：建立班別總表 (★已修改：新增自動填補功能)
+# 模組 4：建立班別總表 (不變)
 # --------------------
 def create_shift_summary(df_analysis: pd.DataFrame) -> pd.DataFrame:
     if df_analysis.empty:
@@ -186,10 +204,6 @@ def create_shift_summary(df_analysis: pd.DataFrame) -> pd.DataFrame:
     df_analysis["日期"] = pd.to_datetime(df_analysis["日期"], errors="coerce")
     df_analysis = df_analysis.dropna(subset=["日期"])
     all_dates = sorted(df_analysis["日期"].dt.strftime("%Y-%m-%d").unique())
-
-    # 建立一個快速查找【職稱】的字典，用來判斷是否為醫師或兼職
-    # 使用 drop_duplicates 確保每個員工只取一筆資料
-    emp_title_map = df_analysis[["員工編號", "姓名", "職稱"]].drop_duplicates().set_index(["員工編號", "姓名"])["職稱"].to_dict()
 
     summary_dict = {}
     for _, row in df_analysis.iterrows():
@@ -206,27 +220,7 @@ def create_shift_summary(df_analysis: pd.DataFrame) -> pd.DataFrame:
 
     data_out = []
     for (emp_id, emp_name), shifts in summary_dict.items():
-        # --- 步驟 3：自動填補邏輯 ---
-        
-        # 1. 取得該員工的職稱
-        title = str(emp_title_map.get((emp_id, emp_name), "")).strip()
-        
-        # 2. 判斷是否排除：職稱包含 "醫師" 或 "兼職" 者，不填補
-        is_excluded = ("醫師" in title) or ("兼職" in title)
-        
-        # 3. 建立 {sta}/{res} 的循環產生器
-        leave_cycle = cycle(["{sta}", "{res}"])
-        
-        row = [emp_id, emp_name]
-        for d in all_dates:
-            val = shifts.get(d, "") # 取得當天班別
-            
-            # 若格子是空的 (空班) 且 不在排除名單內 (非醫師、非兼職)
-            if val == "" and not is_excluded:
-                # 依序填入 {sta} 或 {res}
-                val = next(leave_cycle)
-                
-            row.append(val)
+        row = [emp_id, emp_name] + [shifts.get(d, "") for d in all_dates]
         data_out.append(row)
 
     columns = ["員工編號", "員工姓名"] + all_dates
@@ -236,12 +230,6 @@ def create_shift_summary(df_analysis: pd.DataFrame) -> pd.DataFrame:
 # Streamlit 主程式 (不變)
 # --------------------
 st.title("班表處理器")
-
-st.markdown("""
-**功能說明**：
-* **自動轉換**：依據既定規則轉換班別代碼。
-* **自動填補**：非醫師、非兼職人員的空班，將自動依序填入 `{sta}` (例假日) 與 `{res}` (休息日)。
-""")
 
 shift_file = st.file_uploader("上傳班表 Excel 檔案", type=["xlsx", "xlsm"])
 employee_file = st.file_uploader("上傳員工資料 Excel 檔案", type=["xlsx", "xlsm"])
@@ -271,7 +259,7 @@ if shift_file and employee_file:
             df_summary = create_shift_summary(df_analysis)
 
             st.success("班別總表已生成完成！")
-            st.subheader("班別總表（已過濾無效姓名 & 含自動填補假別）")
+            st.subheader("班別總表（已過濾無效姓名 & 找不到員工明細的姓名已刪除）")
             st.dataframe(df_summary)
 
             # --------------------
