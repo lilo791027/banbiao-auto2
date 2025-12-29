@@ -168,7 +168,7 @@ def get_class_code(emp_category, emp_early_special, clinic_name, shift_type, shi
     return str(emp_category) + str(region) + str(base)
 
 # --------------------
-# 模組 4：建立班別總表 (嚴格刪除無員編)
+# 模組 4：建立班別總表 (嚴格刪除無員編 + 自動填補)
 # --------------------
 def create_shift_summary(df_analysis: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     if df_analysis.empty:
@@ -193,29 +193,29 @@ def create_shift_summary(df_analysis: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
         info_map[(emp_id, emp_name)] = emp_title
 
     data_out = []
-    debug_list = []
-
+    
+    # 垃圾關鍵字清單 (備用，主要靠員編過濾)
     invalid_keywords = ["義診", "單診", "盤點", "電打", "公務", "測試"]
 
     for (emp_id, emp_name), shifts in summary_dict.items():
         title = info_map.get((emp_id, emp_name), "")
         
-        # === 關鍵邏輯 ===
-        # 1. 檢查員編：如果是空、nan、None，該員直接刪除
+        # === 關鍵邏輯：第一關 ===
+        # 1. 檢查員編：如果是空、nan、None，該員直接刪除 (Drop)
         has_valid_id = emp_id and emp_id.lower() not in ["nan", "none", ""]
         
-        # 2. 檢查無效姓名
+        # 2. 檢查名字是否包含垃圾關鍵字
         is_invalid_name = any(k in emp_name for k in invalid_keywords)
         
-        # 如果無員編 或 名字無效，直接跳過 (Drop row)
+        # 若無員編，直接跳過不處理
         if not has_valid_id or is_invalid_name:
             continue
-        # ===============
-
-        # 3. 判斷是否需要填補 (僅排除 醫師/兼職)
+            
+        # === 填補邏輯：第二關 ===
+        # 3. 判斷是否為醫師或兼職 (這些人有員編，但不用填補)
         is_doctor_or_pt = ("醫師" in title) or ("兼職" in title)
         
-        # 如果不是醫師也不是兼職，就要填補
+        # 決定是否填補：不是醫師也不是兼職
         should_fill = not is_doctor_or_pt
         
         # 準備循環填補器
@@ -228,7 +228,7 @@ def create_shift_summary(df_analysis: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
             
             if is_empty:
                 if should_fill:
-                    val = next(leave_cycle) 
+                    val = next(leave_cycle) # 自動填入
                 else:
                     val = "" # 醫師/兼職 保持空白
             
@@ -236,14 +236,15 @@ def create_shift_summary(df_analysis: pd.DataFrame) -> tuple[pd.DataFrame, pd.Da
         data_out.append(row)
 
     cols = ["員工編號", "員工姓名"] + all_dates
-    return pd.DataFrame(data_out, columns=cols), pd.DataFrame(debug_list)
+    # 回傳空的 debug_list 以符合格式
+    return pd.DataFrame(data_out, columns=cols), pd.DataFrame()
 
 # --------------------
 # Streamlit 主程式
 # --------------------
-st.set_page_config(page_title="班表處理器(終極版)", layout="wide")
-st.title("班表處理器")
-st.success("規則：無員編者直接刪除；非醫師/兼職的員工，自動填補空班。")
+st.set_page_config(page_title="班表處理器(最終版)", layout="wide")
+st.title("班表處理器V10")
+st.success("✅ 規則：【無員編】者直接刪除；非醫師/兼職的員工，自動填補空班。")
 
 col1, col2 = st.columns(2)
 with col1:
@@ -260,7 +261,8 @@ if shift_file and employee_file:
         
     df_emp_raw = None
     try:
-        if employee_file.name.endswith('.csv'):
+        if employee_file.name.lower().endswith('.csv'):
+            # 支援 CSV 讀取 (解決您之前的檔案問題)
             df_emp_raw = pd.read_csv(employee_file)
         else:
             wb_emp = load_workbook(employee_file, data_only=True)
@@ -288,9 +290,10 @@ if shift_file and employee_file:
                 shift_map = {"早": "早", "午": "午", "晚": "晚"}
                 
                 df_analysis = create_shift_analysis(df_shift, df_emp_raw, shift_map)
+                # 這裡會執行強力過濾邏輯
                 df_summary, _ = create_shift_summary(df_analysis)
             
-            st.subheader("📊 班別總表 (已過濾無員編)")
+            st.subheader("📊 班別總表 (無員編已移除)")
             st.dataframe(df_summary, use_container_width=True)
 
             with BytesIO() as output:
